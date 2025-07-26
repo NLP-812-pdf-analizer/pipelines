@@ -32,7 +32,15 @@ def is_table_block(text):
     return len(lines) >= 3 and digit_lines / len(lines) > 0.5
 
 def is_equation_like(text):
-    return bool(re.search(r'[=><\^×\*\[\]]', text)) or re.search(r'\bK\d+\b', text)
+    # Удаляем только если:
+    # 1. В строке есть уравнение
+    # 2. И она короткая (до 100 симв.)
+    # 3. Или не содержит нормальных слов (только формулы)
+    has_symbols = re.search(r'[=><\^×\*\[\]]', text)
+    short = len(text.strip()) < 100
+    no_words = not re.search(r'[a-zA-Z]{4,}', text)
+
+    return has_symbols and (short or no_words)
 
 def is_caption_line(text):
     text = text.strip()
@@ -63,6 +71,7 @@ def remove_references(lines):
         return lines[:bracket_refs[0]]
 
     return lines
+
 
 # === Объединение разорванных строк ===
 
@@ -119,8 +128,8 @@ def extract_lapdf_text(pdf_path):
                 continue
             if is_table_block(text):
                 continue
-            # if is_equation_like(text):
-            #     continue
+            if is_equation_like(text):
+                continue
             # if is_caption_line(text):
             #     continue
 
