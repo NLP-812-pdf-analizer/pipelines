@@ -1,149 +1,136 @@
+import re
 import fitz  # PyMuPDF
 import argparse
+
+def extract_with_pymupdf(pdf_path):
+    text = []
+    doc = fitz.open(pdf_path)
+    for i, page in enumerate(doc):
+        page_text = page.get_text()
+        if page_text:
+            text.append(page_text)
+        else:
+            print(f"[!] Страница {i + 1} не содержит текста.")
+    return "\n".join(text)
+
 import re
+import unicodedata
 
-# === Удаление "мусорных" блоков ===
+def fix_hyphenated_words(text):
+     # Склеивает переносы вида "technol-\nogy" → "technology"
+    text = re.sub(r'(\w+)-\n(\w+)', r'\1\2', text)
 
-def is_noise_block(text, bbox, page_height):
-    text = text.strip()
-    _, y0, _, y1 = bbox
+    # Склеивает переносы с пробелом (иногда так бывает): "technol- \nogy"
+    text = re.sub(r'(\w+)-\s*\n\s*(\w+)', r'\1\2', text)
 
-    # ВЕРХ страницы или НИЗ страницы
-    if y1 < 100 or y0 > page_height - 100:
-        return True
+    # Удаляет лишние \n внутри предложений
+    text = re.sub(r'(?<!\n)\n(?!\n)', ' ', text)
 
-    # Очень короткий текст (менее 30 символов)
-    if len(text) < 30:
-        return True
-
-    # Весь текст в верхнем регистре и не содержит точек (подписи, заголовки, номера рисунков)
-    if text.isupper() and '.' not in text and len(text.split()) < 6:
-        return True
-
-    # Мало букв, много символов или цифр (например: "© 2023, v1.2", или DOI)
-    if re.match(r'^[\W\d\s]+$', text):
-        return True
-
-    return False
-
-def is_table_block(text):
-    lines = text.strip().split('\n')
-    digit_lines = sum(1 for line in lines if re.search(r'\d{2,}', line))
-    return len(lines) >= 3 and digit_lines / len(lines) > 0.5
-
-def is_equation_like(text):
-    # Удаляем только если:
-    # 1. В строке есть уравнение
-    # 2. И она короткая (до 100 симв.)
-    # 3. Или не содержит нормальных слов (только формулы)
-    has_symbols = re.search(r'[=><\^×\*\[\]]', text)
-    short = len(text.strip()) < 100
-    no_words = not re.search(r'[a-zA-Z]{4,}', text)
-
-    return has_symbols and (short or no_words)
-
-def is_caption_line(text):
-    text = text.strip()
-    # Оставляем Figure 6 shows ...
-    if re.match(r'^\s*(Fig(\.|ure)?|Figure)\s*\d+\s+(shows|illustrates|demonstrates)', text, re.IGNORECASE):
-        return False
-    # Удаляем: Fig. 2., Table I:, Eq. [3]
-    if re.match(r'^\s*(Fig(\.|ure)?|Figure|Table|Eq(uation)?)(\s+\w+)?\s*(\.|:)?\s*$', text, re.IGNORECASE):
-        return True
-    return False
+    return text
 
 
-def remove_references(lines):
-    digit_refs = []  # для 1. 2. 3.
-    bracket_refs = []  # для [1] [2] [3]
+def replace_ligatures(text):
+    return text.replace("ﬁ", "fi").replace("ﬂ", "fl").replace("ﬀ", "ff").replace("ﬃ", "ffi").replace("ﬄ", "ffl")
 
-    for i in range(len(lines)):
-        line = lines[i].strip()
-        if re.match(r'^\d+\.\s*$', line):  # 1.
-            digit_refs.append(i)
-        elif re.match(r'^\[\d+\]', line):  # [1]
-            bracket_refs.append(i)
+# def is_junk_line(line):
+#     line = line.strip()
+#     # Пустые или очень короткие строки
+#     if not line or len(line) < 5:
+#         return True
+#     # Строки вроде "All rights reserved" или email
+#     if re.search(r"(rights reserved|doi\.org|@|\bpage\b|\bfigure\b|\btable\b|http[s]?://)", line, re.IGNORECASE):
+#         return True
+#     # Строки, где >50% символов — не буквы/цифры/пробелы
+#     ratio = sum(1 for c in line if not (c.isalnum() or c in " .,:;-%()[]")) / max(len(line), 1)
+#     if ratio > 0.4:
+#         return True
+#     return False
 
-    # Удалить с первой ссылки, если найдено 3 или более подряд ссылок
-    if len(digit_refs) >= 3:
-        return lines[:digit_refs[0]]
-    if len(bracket_refs) >= 3:
-        return lines[:bracket_refs[0]]
-
+def remove_references_section(lines):
+    patterns = [r'^references\b', r'^bibliography\b', r'^literature\b', r'^cited works\b']
+    for i, line in enumerate(lines):
+        line_lower = line.strip().lower()
+        for pattern in patterns:
+            if re.match(pattern, line_lower) and len(line.split()) < 5:
+                return lines[:i]  # Обрезаем всё после "References"
     return lines
 
+# def is_junk_line(line):
+#     line = line.strip()
 
-# === Объединение разорванных строк ===
+#     if not line or len(line) < 5:
+#         return True
 
+#     # Удаляем строки с символами, которых больше 50% — не алфавит
+#     non_alnum_ratio = sum(1 for c in line if not c.isalnum()) / len(line)
+#     if non_alnum_ratio > 0.4:
+#         return True
 
-def merge_broken_lines(lines):
-    merged = []
-    current = ""
+#     # Удаляем строки, в которых мало гласных (не похоже на реальные слова)
+#     if sum(c in 'aeiou' for c in line.lower()) < 2:
+#         return True
 
-    i = 0
-    while i < len(lines):
-        line = lines[i].strip()
-        if not line:
-            i += 1
-            continue
+#     # Удаляем строки с мусорными символами
+#     if re.search(r'[þ⋅⁄≠≈∗†‡§]', line):
+#         return True
 
-        # Проверка переноса слова через дефис
-        if line.endswith('-') and i + 1 < len(lines):
-            next_line = lines[i + 1].strip()
-            # Склеиваем без дефиса
-            line = line[:-1] + next_line
-            i += 1  # пропустить следующую строку
+#     # Удаляем формульные короткие псевдослова типа Cc;eXin
+#     if re.fullmatch(r'[\w;⋅]+', line) and len(line.split()) == 1:
+#         return True
 
-        # Проверка завершения предложения
-        if re.search(r'[.!?…]["”\']?$|[:;]$|^\s*[-–•]', line):
-            if current:
-                merged.append(current + " " + line if current else line)
-                current = ""
-            else:
-                merged.append(line)
+#     return False
+
+def is_junk_line(line):
+    line = line.strip()
+    if not line or len(line) < 5:
+        return True
+
+    # Очень высокая доля не-алфавитных символов
+    ratio = sum(1 for c in line if not c.isalnum() and c not in ".:;,-=+*/()[]") / len(line)
+    if ratio > 0.5:
+        return True
+
+    # Очень мало гласных — почти наверняка псевдокод/формула
+    if sum(c in 'aeiouAEIOU' for c in line) < 2:
+        return True
+
+    # Подозрительные символы из PDF-искажений
+    if re.search(r'[ð¼Þþ≠≈⁄∙⋅]', line):
+        return True
+
+    # Похоже на уравнение (много "d(...)/dt", скобки, Wmt, Cu, Fe и т.п.)
+    if re.search(r'd[WQ][a-z]*\s*/\s*dt', line, re.IGNORECASE):
+        return True
+    if re.search(r'[[]?[A-Z][a-z]?[a-z]?[¼=]', line):
+        return True
+
+    return False
+
+def filter_pymupdf_output(text):
+    # Замена лигатур
+    text = replace_ligatures(text)
+
+    # Удаление "грязных" строк
+    lines = text.splitlines()
+    clean_lines = [line for line in lines if not is_junk_line(line)]
+
+    clean_lines = remove_references_section(clean_lines)
+    # return "\n".join(clean_lines)
+    # Слияние перенесённых строк (если они заканчиваются без точки)
+    merged_lines = []
+    buffer = ""
+    for line in clean_lines:
+        if buffer and not buffer.endswith(('.', ':', ';', '?')):
+            buffer += " " + line.strip()
         else:
-            current = current + " " + line if current else line
+            if buffer:
+                merged_lines.append(buffer.strip())
+            buffer = line.strip()
+    if buffer:
+        merged_lines.append(buffer.strip())
 
-        i += 1
+    return "\n".join(merged_lines)
 
-    if current:
-        merged.append(current)
-
-    return [re.sub(r'\s+', ' ', m.strip()) for m in merged]
-
-# === Основная функция ===
-
-def extract_lapdf_text(pdf_path):
-    doc = fitz.open(pdf_path)
-    all_lines = []
-
-    for page in doc:
-        page_height = page.rect.height
-        blocks = page.get_text("blocks")
-        blocks.sort(key=lambda b: (round(b[1], 1), b[0]))
-
-        for block in blocks:
-            x0, y0, x1, y1, text, *_ = block
-            if is_noise_block(text, (x0, y0, x1, y1), page_height):
-                continue
-            if is_table_block(text):
-                continue
-            if is_equation_like(text):
-                continue
-            # if is_caption_line(text):
-            #     continue
-
-            # Расщепляем по \n внутри блока
-            lines = text.strip().split('\n')
-            all_lines.extend(lines)
-
-    # Объединение строк в предложения
-    clean_lines = merge_broken_lines(all_lines)
-    
-    # Удаление списка литературы
-    clean_lines = remove_references(clean_lines)
-
-    return '\n'.join(clean_lines)
 
 # === CLI-интерфейс ===
 if __name__ == "__main__":
@@ -152,8 +139,10 @@ if __name__ == "__main__":
     parser.add_argument("output_path", help="Путь к выходному .txt файлу")
     args = parser.parse_args()
     
-    result = extract_lapdf_text(args.pdf_path)
+    result = extract_with_pymupdf(args.pdf_path)
+    filtered_result = filter_pymupdf_output(result)
+
     with open(args.output_path, "w", encoding="utf-8") as f:
-        f.write(result)
+        f.write(filtered_result)
 
     print(f"✅ Очищенный и объединённый текст сохранён в: {args.output_path}")
