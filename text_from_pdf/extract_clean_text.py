@@ -68,8 +68,6 @@ def is_junk_line(line):
     return False
 
 def filter_pymupdf_output(text):
-    # Склеивание переносов слов
-    text = fix_hyphenated_words(text)
 
     # Замена лигатур
     text = replace_ligatures(text)
@@ -93,7 +91,23 @@ def filter_pymupdf_output(text):
     if buffer:
         merged_lines.append(buffer.strip())
 
-    return "\n".join(merged_lines)
+    result = "\n".join(merged_lines)
+    
+    # Склеивание переносов слов
+    result = fix_hyphenated_words(result)
+
+    return result
+
+
+def extract_clean_text(pdf_path) -> str:
+    """
+    Извлекает очищенный текст из PDF-файла.
+    
+    :param pdf_path: Путь к PDF-файлу
+    :return: Очищенный текст
+    """
+    raw_text = extract_with_pymupdf(pdf_path)
+    return filter_pymupdf_output(raw_text)
 
 
 # === CLI-интерфейс ===
@@ -103,10 +117,9 @@ if __name__ == "__main__":
     parser.add_argument("output_path", help="Путь к выходному .txt файлу")
     args = parser.parse_args()
     
-    result = extract_with_pymupdf(args.pdf_path)
-    filtered_result = filter_pymupdf_output(result)
+    result = extract_clean_text(args.pdf_path)
 
     with open(args.output_path, "w", encoding="utf-8") as f:
-        f.write(filtered_result)
+        f.write(result)
 
     print(f"✅ Очищенный и объединённый текст сохранён в: {args.output_path}")
