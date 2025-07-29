@@ -13,8 +13,6 @@ def extract_with_pymupdf(pdf_path):
             print(f"[!] Страница {i + 1} не содержит текста.")
     return "\n".join(text)
 
-import re
-import unicodedata
 
 def fix_hyphenated_words(text):
      # Склеивает переносы вида "technol-\nogy" → "technology"
@@ -32,19 +30,6 @@ def fix_hyphenated_words(text):
 def replace_ligatures(text):
     return text.replace("ﬁ", "fi").replace("ﬂ", "fl").replace("ﬀ", "ff").replace("ﬃ", "ffi").replace("ﬄ", "ffl")
 
-# def is_junk_line(line):
-#     line = line.strip()
-#     # Пустые или очень короткие строки
-#     if not line or len(line) < 5:
-#         return True
-#     # Строки вроде "All rights reserved" или email
-#     if re.search(r"(rights reserved|doi\.org|@|\bpage\b|\bfigure\b|\btable\b|http[s]?://)", line, re.IGNORECASE):
-#         return True
-#     # Строки, где >50% символов — не буквы/цифры/пробелы
-#     ratio = sum(1 for c in line if not (c.isalnum() or c in " .,:;-%()[]")) / max(len(line), 1)
-#     if ratio > 0.4:
-#         return True
-#     return False
 
 def remove_references_section(lines):
     patterns = [r'^references\b', r'^bibliography\b', r'^literature\b', r'^cited works\b']
@@ -55,30 +40,6 @@ def remove_references_section(lines):
                 return lines[:i]  # Обрезаем всё после "References"
     return lines
 
-# def is_junk_line(line):
-#     line = line.strip()
-
-#     if not line or len(line) < 5:
-#         return True
-
-#     # Удаляем строки с символами, которых больше 50% — не алфавит
-#     non_alnum_ratio = sum(1 for c in line if not c.isalnum()) / len(line)
-#     if non_alnum_ratio > 0.4:
-#         return True
-
-#     # Удаляем строки, в которых мало гласных (не похоже на реальные слова)
-#     if sum(c in 'aeiou' for c in line.lower()) < 2:
-#         return True
-
-#     # Удаляем строки с мусорными символами
-#     if re.search(r'[þ⋅⁄≠≈∗†‡§]', line):
-#         return True
-
-#     # Удаляем формульные короткие псевдослова типа Cc;eXin
-#     if re.fullmatch(r'[\w;⋅]+', line) and len(line.split()) == 1:
-#         return True
-
-#     return False
 
 def is_junk_line(line):
     line = line.strip()
@@ -107,6 +68,9 @@ def is_junk_line(line):
     return False
 
 def filter_pymupdf_output(text):
+    # Склеивание переносов слов
+    text = fix_hyphenated_words(text)
+
     # Замена лигатур
     text = replace_ligatures(text)
 
