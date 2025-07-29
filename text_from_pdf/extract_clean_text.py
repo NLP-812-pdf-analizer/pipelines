@@ -18,6 +18,9 @@ def fix_hyphenated_words(text):
      # Склеивает переносы вида "technol-\nogy" → "technology"
     text = re.sub(r'(\w+)-\n(\w+)', r'\1\2', text)
 
+    # Склеивает переносы вида "technol- ogy" → "technology"
+    text = re.sub(r'(\w+)-\s+([a-z]\w*)', r'\1\2', text)
+
     # Склеивает переносы с пробелом (иногда так бывает): "technol- \nogy"
     text = re.sub(r'(\w+)-\s*\n\s*(\w+)', r'\1\2', text)
 
